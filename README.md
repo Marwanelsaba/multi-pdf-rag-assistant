@@ -434,7 +434,7 @@ These are planned improvements, not completed features.
 
 | Dashboard | Chat |
 |---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Chat](docs/screenshots/chat.png) |
+| ![Dashboard](docs/screenshots/Dashboard.png) | ![Chat](docs/screenshots/chat.png) |
 
 | Citation preview |
 |---|
