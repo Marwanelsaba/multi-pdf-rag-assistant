@@ -1,490 +1,460 @@
+<div align="center">
+
 # Multi-PDF RAG Assistant
 
-A local AI document assistant that lets users create isolated chat sessions, upload multiple PDF documents, ask questions about their contents, and receive grounded answers with file and page-level citations.
+**Chat with your PDFs. Fully local. Every answer cites its file and page.**
 
-The application combines a React frontend with a FastAPI backend, ChromaDB for vector search, SentenceTransformers for embeddings, and a local Qwen 2.5 7B model running through Ollama.
+A document-grounded AI workspace built on FastAPI, ChromaDB and a local Qwen 2.5 7B model.
+No cloud LLM, no API keys, no data leaving your machine.
+
+![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=white)
+![MUI](https://img.shields.io/badge/UI-Material%20UI-007FFF?logo=mui&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/Vector%20DB-ChromaDB-FF6446)
+![Ollama](https://img.shields.io/badge/LLM-Ollama%20%2B%20Qwen%202.5%207B-black)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+</div>
+
+<!-- Replace with your best screenshot or a short GIF of ask → answer → click citation -->
+![Dashboard](docs/screenshots/dashboard.png)
+
+---
+
+## Overview
+
+Multi-PDF RAG Assistant lets you create isolated chat sessions, upload multiple PDFs into each one, and ask questions about their contents. Answers are generated **only from the retrieved document context**, and every answer links back to the exact **file and page** it came from. Clicking a citation opens the cited PDF page inside the app.
+
+The system is a complete retrieval-augmented generation pipeline: PDF ingestion, chunking, local embeddings, session-filtered vector search, conversational query rewriting, local LLM generation, persistent chat history, and a React workspace on top.
+
+### Highlights
+
+- **Grounded answers with citations.** Page-level sources are stored with each message and shown as clickable chips.
+- **Session isolation.** Retrieval is filtered by `session_id`, so one conversation can never leak documents into another, even when the same PDF exists in both.
+- **Honest failure mode.** When the documents don't support an answer, the assistant says so instead of guessing.
+- **Conversation-aware retrieval.** Follow-up questions such as *"Which one is listed first?"* are rewritten into standalone queries before search.
+- **100% local.** Embeddings run through SentenceTransformers and generation through Ollama.
+- **Persistent.** Sessions, documents and chat history survive restarts (SQLite and ChromaDB).
 
 ---
 
 ## Features
 
-- Upload multiple PDF documents
-- Create independent chat sessions
-- Session-based document isolation
-- PDF page extraction
-- Recursive text chunking
-- Local semantic embeddings
-- Persistent ChromaDB vector storage
-- Retrieval-Augmented Generation (RAG)
-- Local Qwen 2.5 7B inference through Ollama
-- No-answer fallback when documents do not support a question
-- Multi-turn conversation history
-- Query rewriting for follow-up questions
-- Persistent chat history with SQLite
-- File and page-level citations
-- Interactive citation chips
-- PDF source preview inside the application
-- Open cited PDF pages in a new browser tab
-- Session deletion
-- Document deletion
-- Duplicate PDF detection within a session
-- Automatic session naming
-- Dark desktop-oriented document workspace
-- Responsive React interface
+| Area | What it does |
+|---|---|
+| **Documents** | Multi-PDF upload, page-by-page extraction, duplicate PDF detection within a session, document deletion |
+| **Sessions** | Independent chat sessions, automatic session naming, rename, delete |
+| **Retrieval** | Recursive chunking, local embeddings, persistent vector storage, session-filtered semantic search |
+| **Generation** | Local Qwen 2.5 7B via Ollama, context-only answering, no-answer fallback |
+| **Conversation** | Multi-turn history, follow-up query rewriting, persistent messages |
+| **Citations** | File + page sources, clickable citation chips, source drawer with in-app PDF preview, open page in a new tab |
+| **Interface** | Dark, responsive document workspace built with React and Material UI |
 
 ---
 
 ## Architecture
 
+### Ingestion
+
 ```mermaid
 flowchart LR
-    U[User]
+    A["PDF upload"] --> B["Page extraction<br/>PyPDFLoader"]
+    B --> C["Recursive chunking<br/>1000 / 200"]
+    C --> D["Embeddings<br/>all-MiniLM-L6-v2"]
+    D --> E[("ChromaDB<br/>chunks + metadata")]
+    A --> F[("SQLite<br/>document record")]
+```
 
-    FE[React + Vite Frontend]
-    API[FastAPI Backend]
+### Question answering
 
-    PDF[PDF Processing]
-    CHUNK[Text Chunking]
-    EMB[SentenceTransformers Embeddings]
-    DB[(ChromaDB)]
-    SQLITE[(SQLite)]
+```mermaid
+flowchart LR
+    Q["User question"] --> RW{"Follow-up?"}
+    RW -- yes --> RQ["Rewrite as<br/>standalone query"]
+    RW -- no --> R
+    RQ --> R["Semantic retrieval<br/>filtered by session_id"]
+    R --> DB[("ChromaDB")]
+    DB --> CTX["Relevant chunks"]
+    CTX --> LLM["Qwen 2.5 7B<br/>via Ollama"]
+    LLM --> ANS["Grounded answer<br/>or no-answer fallback"]
+    ANS --> CIT["File + page citations"]
+    CIT --> H[("SQLite<br/>chat history")]
+    CIT --> UI["React UI"]
+```
 
-    RET[Semantic Retrieval]
-    RW[Query Rewriting]
-    LLM[Qwen 2.5 7B via Ollama]
-    CIT[File + Page Citations]
+### System overview
 
-    U --> FE
-    FE --> API
+```mermaid
+flowchart TB
+    subgraph Frontend["Frontend: React + Vite + MUI"]
+        UI["Dashboard / Chat / Source drawer"]
+    end
+    subgraph Backend["Backend: FastAPI"]
+        API["Routers<br/>sessions, upload, documents, chat"]
+        SVC["Services<br/>pdf, chunking, embedding, retrieval, rag, llm, citation"]
+    end
+    UI -- "/api (Vite proxy)" --> API
+    API --> SVC
+    SVC --> CH[("ChromaDB")]
+    SVC --> SQ[("SQLite")]
+    SVC --> OL["Ollama<br/>Qwen 2.5 7B"]
+```
 
-    API --> PDF
-    PDF --> CHUNK
-    CHUNK --> EMB
-    EMB --> DB
+---
 
-    API --> RW
-    RW --> RET
-    RET --> DB
-    RET --> LLM
+## How the RAG pipeline works
 
-    LLM --> CIT
-    CIT --> FE
+### 1. PDF ingestion
+PDFs are loaded page by page with `PyPDFLoader`. Page numbers are kept as metadata so every retrieved chunk can be traced back to its source page.
 
-    API --> SQLITE
+### 2. Chunking
+Text is split with `RecursiveCharacterTextSplitter`:
 
-RAG Pipeline
-The application follows a document-grounded RAG workflow:
-PDF Upload
-    ↓
-Page Extraction
-    ↓
-Recursive Chunking
-    ↓
-SentenceTransformer Embeddings
-    ↓
-ChromaDB
-    ↓
-Semantic Retrieval
-    ↓
-Optional Query Rewriting
-    ↓
-Relevant Document Context
-    ↓
-Qwen 2.5 7B
-    ↓
-Grounded Answer
-    ↓
-File + Page Citations
+| Parameter | Value |
+|---|---|
+| Chunk size | 1000 |
+| Chunk overlap | 200 |
 
-1. PDF ingestion
-Uploaded PDFs are processed page by page using PyPDFLoader.
-Page numbers are preserved as metadata so retrieved chunks can later be associated with their source page.
-2. Chunking
-Document text is split using RecursiveCharacterTextSplitter.
-Current configuration:
-- Chunk size: 1000
-- Chunk overlap: 200
-3. Embeddings
-The project uses:
-sentence-transformers/all-MiniLM-L6-v2
+### 3. Embeddings
+Chunks are embedded locally with `sentence-transformers/all-MiniLM-L6-v2`. No external embedding API is used.
 
-Embeddings are generated locally and stored in ChromaDB.
-4. Vector storage and retrieval
-ChromaDB stores document chunks together with metadata such as:
+### 4. Vector storage and retrieval
+ChromaDB stores each chunk with its metadata:
+
 - source filename
 - page number
 - document ID
 - document UID
 - session ID
-Semantic similarity search retrieves the most relevant chunks for a question.
-5. Session isolation
-Every document chunk is associated with a session_id.
-Retrieval is filtered by the active session, preventing documents from another conversation from being included in the RAG context.
-This allows the same PDF to exist in different sessions without mixing their retrieval results.
-6. Query rewriting
-For multi-turn conversations, the system can rewrite follow-up questions into standalone retrieval queries.
-For example:
-User:
-What programming languages does Marwan know?
 
-User:
-Which one is listed first?
+A similarity search returns the chunks most relevant to the question.
 
-The second question can be rewritten into a standalone retrieval query using the conversation history.
-The rewritten question is used for retrieval, while the final answer must still be supported by the retrieved document context.
-7. Local generation
-The retrieved context is passed to:
-Qwen 2.5 7B
+### 5. Session isolation
+Every chunk carries a `session_id`, and retrieval always filters on the active session. The same PDF can be uploaded into several sessions without their results mixing:
 
-running locally through Ollama.
-The model is instructed to answer only from the supplied document context.
-When the required information cannot be supported by the documents, the system returns:
-I could not find the answer in the provided documents.
+```text
+Session 5                         Session 6
+├── Marwan_cv.pdf                 └── (no documents)
+└── attpdf1.pdf
 
-8. Citations
-Successful answers can include citations such as:
-attpdf1.pdf · Page 3
+A question asked in Session 6 can never retrieve content from Session 5.
+```
 
-Citations are persisted with chat messages and can be opened through the frontend source viewer.
-Technology Stack
-Backend
-Technology	Purpose
-Python	Backend language
-FastAPI	REST API
-LangChain	Document/RAG orchestration
-PyPDFLoader	PDF extraction
-RecursiveCharacterTextSplitter	Chunking
-SentenceTransformers	Embeddings
-ChromaDB	Vector database
-Ollama	Local model runtime
-Qwen 2.5 7B	Local LLM
-SQLite	Application metadata and chat persistence
-SQLAlchemy	Database ORM
+### 6. Query rewriting
+Follow-up questions often depend on earlier turns:
 
+```text
+User: What programming languages does Marwan know?
+User: Which one is listed first?
+```
 
-Frontend
-Technology	Purpose
-React	Frontend framework
-Vite	Development/build tooling
-Material UI	UI components and theming
-React Router	Client-side routing
+The second question is meaningless to a vector search on its own. The system uses the conversation history to rewrite it into a standalone retrieval query. The rewritten query is used **only for retrieval**. The final answer must still be supported by the retrieved context.
 
+### 7. Local generation
+The retrieved context is passed to Qwen 2.5 7B running through Ollama. The model is instructed to answer only from that context. When the documents don't support an answer, the system returns:
 
-Project Structure
-multi-pdf-rag-assistant/
-│
-├── app/
-│   └── rag.py
-│
-├── backend/
-│   ├── config.py
-│   ├── database.py
-│   ├── main.py
-│   │
-│   ├── models/
-│   │   ├── chat.py
-│   │   ├── document.py
-│   │   └── session.py
-│   │
-│   ├── routers/
-│   │   ├── chat.py
-│   │   ├── documents.py
-│   │   ├── sessions.py
-│   │   └── upload.py
-│   │
-│   ├── services/
-│   │   ├── chunking_service.py
-│   │   ├── citation_service.py
-│   │   ├── embedding_service.py
-│   │   ├── llm_service.py
-│   │   ├── pdf_service.py
-│   │   ├── rag_service.py
-│   │   ├── retrieval_service.py
-│   │   └── vectordb_service.py
-│   │
-│   └── utils/
-│
-├── frontend/
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── layouts/
-│   │   ├── pages/
-│   │   ├── services/
-│   │   ├── theme/
-│   │   └── utils/
-│   ├── package.json
-│   └── vite.config.js
-│
-├── tests/
-│   ├── test_chunking.py
-│   ├── test_citations.py
-│   ├── test_embedding.py
-│   ├── test_llm.py
-│   ├── test_pdf.py
-│   ├── test_rag.py
-│   ├── test_retrieval.py
-│   ├── test_session_vectors.py
-│   └── test_vectordb.py
-│
-├── requirements.txt
-├── .gitignore
-└── LICENSE
+> I could not find the answer in the provided documents.
 
-Local runtime data
-The application creates local runtime data under:
-data/
-├── uploads/
-├── chroma/
-└── metadata/
+### 8. Citations
+Sources are returned with the answer and persisted with the message:
 
-These files are intentionally excluded from version control.
-API Overview
-Health
-GET /health
+```json
+{ "file": "attpdf1.pdf", "page": 3 }
+```
 
-Sessions
-Create a session:
-POST /sessions?name=New%20Chat
+The frontend renders them as chips such as `📄 attpdf1.pdf · Page 3`. Clicking one opens a source drawer with the filename, the cited page, and an embedded PDF preview, plus an option to open the page in a new browser tab.
 
-Get sessions:
-GET /sessions
+---
 
-Rename a session:
-PATCH /sessions/{session_id}
+## Tech stack
 
-Example body:
-{
-  "name": "Transformer Architecture"
-}
+**Backend**
 
-Delete a session:
-DELETE /sessions/{session_id}
+| Technology | Purpose |
+|---|---|
+| Python | Backend language |
+| FastAPI | REST API |
+| LangChain | Document and RAG orchestration |
+| PyPDFLoader | PDF extraction |
+| RecursiveCharacterTextSplitter | Chunking |
+| SentenceTransformers | Local embeddings |
+| ChromaDB | Persistent vector database |
+| Ollama + Qwen 2.5 7B | Local LLM runtime and model |
+| SQLite + SQLAlchemy | Sessions, documents and chat persistence |
 
-Documents
-Get documents:
-GET /documents
+**Frontend**
 
-Delete a document:
-DELETE /documents/{document_id}
+| Technology | Purpose |
+|---|---|
+| React + Vite | UI framework and tooling |
+| Material UI | Components and theming |
+| React Router | Client-side routing |
 
-Serve a document PDF for source preview:
-GET /documents/{document_id}/file?session_id={session_id}
+---
 
-Upload
-Upload a PDF to a session:
-POST /upload?session_id={session_id}
+## Getting started
 
-The PDF is sent as multipart form data using the field:
-file
+### Prerequisites
 
-Chat
-Send a question:
-POST /chat
+- Python 3.10+ (adjust to the version you developed with)
+- Node.js and npm
+- [Ollama](https://ollama.com)
 
-Example:
+Pull the model:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Make sure Ollama is running before you start the backend.
+
+### 1. Backend
+
+From the project root:
+
+<details open>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn backend.main:app --reload
+```
+</details>
+
+<details>
+<summary><b>macOS / Linux</b></summary>
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn backend.main:app --reload
+```
+</details>
+
+| URL | What |
+|---|---|
+| http://127.0.0.1:8000 | API |
+| http://127.0.0.1:8000/docs | Swagger UI |
+
+> The first run downloads the embedding model, so startup takes longer once.
+
+### 2. Frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. The Vite dev server proxies `/api` requests to the FastAPI backend.
+
+---
+
+## Usage
+
+1. Open the dashboard.
+2. Create a new chat session.
+3. Upload one or more PDFs. They are extracted, chunked, embedded and indexed.
+4. Ask a question.
+5. Read the grounded answer and its citation chips.
+6. Click a citation to inspect the exact page in the source drawer.
+
+---
+
+## API reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/sessions?name=New%20Chat` | Create a session |
+| `GET` | `/sessions` | List sessions |
+| `PATCH` | `/sessions/{session_id}` | Rename a session |
+| `DELETE` | `/sessions/{session_id}` | Delete a session |
+| `POST` | `/upload?session_id={id}` | Upload a PDF (multipart field `file`) |
+| `GET` | `/documents` | List documents |
+| `GET` | `/documents/{document_id}/file?session_id={id}` | Serve the PDF for source preview |
+| `DELETE` | `/documents/{document_id}` | Delete a document |
+| `POST` | `/chat` | Ask a question |
+| `GET` | `/chat/{session_id}/messages` | Get conversation history |
+
+<details>
+<summary><b>Example: rename a session</b></summary>
+
+```json
+PATCH /sessions/5
+{ "name": "Transformer Architecture" }
+```
+</details>
+
+<details>
+<summary><b>Example: ask a question</b></summary>
+
+Request:
+
+```json
 {
   "question": "What architecture does the paper introduce?",
   "session_id": 5
 }
+```
 
-Example response structure:
+Response:
+
+```json
 {
   "answer": "The paper introduces the Transformer architecture...",
   "sources": [
-    {
-      "file": "attpdf1.pdf",
-      "page": 3
-    }
+    { "file": "attpdf1.pdf", "page": 3 }
   ],
   "session_id": 5,
   "user_message_id": 10,
   "assistant_message_id": 11
 }
+```
+</details>
 
-Get conversation history:
-GET /chat/{session_id}/messages
+---
 
-Running Locally
-Prerequisites
-Install:
-- Python
-- Node.js and npm
-- Ollama
-Pull the local Qwen model:
-ollama pull qwen2.5:7b
-
-Backend Setup
-From the project root:
-Windows PowerShell
-Create and activate the virtual environment:
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-Install Python dependencies:
-python -m pip install -r requirements.txt
-
-Start FastAPI:
-python -m uvicorn backend.main:app --reload
-
-The API will be available at:
-http://127.0.0.1:8000
-
-Swagger documentation:
-http://127.0.0.1:8000/docs
-
-Frontend Setup
-Open a second terminal:
-cd frontend
-
-Install dependencies:
-npm install
-
-Start the Vite development server:
-npm run dev
-
-The frontend will be available at:
-http://localhost:5173
-
-The Vite development server proxies /api requests to the FastAPI backend.
-Example Usage
-A typical workflow looks like this:
-1. Open the dashboard
-        ↓
-2. Create a new chat session
-        ↓
-3. Upload one or more PDFs
-        ↓
-4. PDFs are extracted, chunked, embedded, and indexed
-        ↓
-5. Ask a question
-        ↓
-6. Relevant document chunks are retrieved
-        ↓
-7. Qwen generates a grounded answer
-        ↓
-8. File/page citations are displayed
-        ↓
-9. Click a citation
-        ↓
-10. Inspect the cited PDF page
-
-Session Isolation
-Documents are scoped to their chat session.
-Each indexed chunk contains session metadata, and retrieval filters results using the active session_id.
-For example:
-Session 5
-├── Marwan_cv.pdf
-└── attpdf1.pdf
-
-Session 6
-└── No documents
-
-A question in Session 6 cannot retrieve the documents belonging to Session 5.
-This design also allows the same PDF file to be uploaded into different sessions without mixing their vector search results.
-Citation System
-The application preserves source information through the RAG pipeline.
-An answer can return:
-{
-  "file": "attpdf1.pdf",
-  "page": 3
-}
-
-The frontend renders citations as clickable chips.
-Clicking a citation opens a source drawer containing:
-- document filename
-- cited page
-- PDF preview
-The application also provides an option to open the cited PDF in a new browser tab.
-Design Decisions
-Why ChromaDB?
-ChromaDB provides persistent local vector storage and simple similarity retrieval without requiring a hosted vector database.
-Why SentenceTransformers?
-SentenceTransformers provides a lightweight local embedding model suitable for semantic search without an external embedding API.
-Why Ollama + Qwen?
-Running Qwen locally keeps inference inside the local development environment and avoids dependence on a cloud LLM API.
-Why SQLite?
-SQLite is sufficient for persisting application metadata, sessions, documents, and chat history while keeping the project simple to run locally.
-Why FastAPI?
-FastAPI provides a lightweight API layer connecting the React frontend to the document-processing and RAG services.
-Why React?
-React provides a flexible frontend for managing chat sessions, document uploads, conversation history, citations, and the document workspace.
-Testing
-The repository contains tests covering core components including:
-- PDF processing
-- chunking
-- embeddings
-- retrieval
-- citations
-- RAG behavior
-- session/vector relationships
-- vector database functionality
-- LLM integration
-The tests/ directory contains the current automated test suite.
-Limitations
-The current project is primarily designed as a local AI/RAG application.
-Current limitations include:
-- Local Qwen inference can be slower than hosted model APIs depending on available hardware.
-- The current chat implementation does not use token streaming.
-- PDF previews rely on the browser's native PDF viewer.
-- There is currently no authentication or multi-user account system.
-- The application has not been deployed as a production hosted service.
-- Retrieval quality depends on the selected embedding model, chunking strategy, and retrieved context.
-Future Improvements
-Potential future work includes:
-- Streaming LLM responses
-- Improved retrieval strategies such as MMR
-- Retrieval evaluation and benchmarking
-- Optional reranking
-- More advanced chunking strategies
-- Expanded automated testing
-- Improved backend reliability and cleanup
-- Docker-based deployment
-- Authentication and multi-user support
-- More advanced document preview functionality
-These are future improvements and are not represented as completed features.
-Screenshots
-Dashboard
-Add a screenshot here:
-docs/screenshots/dashboard.png
-
-Example Markdown:
-![Dashboard](docs/screenshots/dashboard.png)
-
-Chat
-Add a screenshot here:
-docs/screenshots/chat.png
-
-Example:
-![Chat](docs/screenshots/chat.png)
-
-Citation Preview
-Add a screenshot here:
-docs/screenshots/citation-preview.png
-
-Example:
-![Citation Preview](docs/screenshots/citation-preview.png)
-
-What This Project Demonstrates
-This project demonstrates practical implementation of:
-- Retrieval-Augmented Generation
-- Semantic vector search
-- Local LLM inference
-- Embedding-based document retrieval
-- FastAPI backend architecture
-- React frontend development
-- Persistent application state
-- Session-aware retrieval
-- Multi-document question answering
-- Source attribution and page-level citations
-- Local AI application design
-License
-This project is licensed under the MIT License.
-See LICENSE for details.
-
-### Before pushing the README
-
-One thing I would **not** do yet is add fake screenshots. We have the real dashboard, chat, and citation-preview screenshots from your development work, so later we can save those actual screenshots into:
+## Project structure
 
 ```text
-docs/screenshots/
+multi-pdf-rag-assistant/
+├── app/
+│   └── rag.py
+├── backend/
+│   ├── main.py
+│   ├── config.py
+│   ├── database.py
+│   ├── models/          # chat, document, session
+│   ├── routers/         # chat, documents, sessions, upload
+│   ├── services/
+│   │   ├── pdf_service.py
+│   │   ├── chunking_service.py
+│   │   ├── embedding_service.py
+│   │   ├── vectordb_service.py
+│   │   ├── retrieval_service.py
+│   │   ├── llm_service.py
+│   │   ├── rag_service.py
+│   │   └── citation_service.py
+│   └── utils/
+├── frontend/
+│   ├── public/
+│   └── src/
+│       ├── components/  # sidebar, uploader, chat, citation chip, source drawer
+│       ├── layouts/
+│       ├── pages/       # Dashboard, Chat
+│       ├── services/    # API client
+│       ├── theme/
+│       └── utils/
+├── tests/
+├── requirements.txt
+├── LICENSE
+└── .gitignore
+```
+
+Runtime data is created locally and excluded from version control:
+
+```text
+data/
+├── uploads/     # original PDFs
+├── chroma/      # vector store
+└── metadata/
+```
+
+---
+
+## Design decisions
+
+| Decision | Reasoning |
+|---|---|
+| **ChromaDB** | Persistent local vector storage with simple metadata filtering. No hosted vector DB needed. |
+| **SentenceTransformers** | A lightweight local embedding model, so semantic search needs no external API. |
+| **Ollama + Qwen 2.5 7B** | Inference stays on the developer machine and doesn't depend on a cloud LLM. |
+| **Metadata-filtered retrieval** | Putting `session_id` on every chunk makes isolation a property of the data, not of UI logic. |
+| **Rewrite for retrieval only** | Rewritten queries improve search, while the answer is still constrained by retrieved context. |
+| **SQLite** | Enough for sessions, documents and chat history, and keeps local setup simple. |
+| **Layered backend** | Routers handle HTTP and services handle each pipeline stage, so each stage is testable on its own. |
+
+---
+
+## Testing
+
+The `tests/` directory covers each stage of the pipeline:
+
+| Area | Test file |
+|---|---|
+| PDF processing | `test_pdf.py` |
+| Chunking | `test_chunking.py` |
+| Embeddings | `test_embedding.py` |
+| Vector database | `test_vectordb.py` |
+| Session / vector relationships | `test_session_vectors.py` |
+| Retrieval | `test_retrieval.py` |
+| Citations | `test_citations.py` |
+| LLM integration | `test_llm.py` |
+| End-to-end RAG | `test_rag.py` |
+
+```bash
+python -m pytest tests
+```
+
+> Some tests (`test_llm.py`, `test_rag.py`) need Ollama running with `qwen2.5:7b` available.
+
+---
+
+## Limitations
+
+- Local 7B inference can be slow depending on your hardware.
+- Responses are not streamed. The full answer appears when generation finishes.
+- PDF previews rely on the browser's native PDF viewer.
+- There is no authentication or multi-user account system.
+- It hasn't been deployed as a hosted production service.
+- Retrieval quality depends on the embedding model, chunking strategy and the context that gets retrieved.
+
+## Roadmap
+
+- [ ] Streaming responses
+- [ ] Improved retrieval (MMR) and optional reranking
+- [ ] Retrieval evaluation and benchmarking
+- [ ] More advanced chunking strategies
+- [ ] Expanded automated tests
+- [ ] Docker-based deployment
+- [ ] Authentication and multi-user support
+- [ ] Richer document preview
+
+These are planned improvements, not completed features.
+
+---
+
+## Screenshots
+
+| Dashboard | Chat |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Chat](docs/screenshots/chat.png) |
+
+| Citation preview |
+|---|
+| ![Citation preview](docs/screenshots/citation-preview.png) |
+
+---
+
+## What this project demonstrates
+
+- End-to-end retrieval-augmented generation
+- Semantic vector search with metadata filtering
+- Local LLM inference and local embeddings
+- Session-aware, multi-document question answering
+- Source attribution with page-level citations
+- Conversational query rewriting
+- Layered FastAPI backend design with persistence
+- A modular React and Material UI frontend
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
