@@ -17,7 +17,7 @@ No cloud LLM, no API keys, no data leaving your machine.
 </div>
 
 <!-- Replace with your best screenshot or a short GIF of ask → answer → click citation -->
-![Dashboard](https://raw.githubusercontent.com/Marwanelsaba/multi-pdf-rag-assistant/main/docs/screenshots/dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/Marwanelsaba/multi-pdf-rag-assistant/main/docs/screenshots/Dashboard.png)
 
 ---
 
