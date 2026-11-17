@@ -3,23 +3,20 @@ venv/
 .venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
-# Environment files
+# Environment and local data
 .env
+data/
 
-# Frontend
+# Frontend dependencies and build
+node_modules/
+dist/
 frontend/node_modules/
 frontend/dist/
 
-# Local RAG data
-data/chroma/
-data/uploads/
-data/metadata/database.db
-
-# Local archives / temporary files
+# Local archives and editor files
 *.zip
-
-# IDE / OS
 .vscode/
 .idea/
 .DS_Store

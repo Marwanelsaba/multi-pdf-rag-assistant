@@ -26,6 +26,7 @@ def create_citations(chunks):
                 "file": source,
                 "page": page,
                 "document_id": document_id,
+                "document_uid": chunk.get("document_uid"),
             }
         )
 

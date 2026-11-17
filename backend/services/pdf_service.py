@@ -1,30 +1,18 @@
-from pathlib import Path
-
-from langchain_community.document_loaders import PyPDFLoader
+from pypdf import PdfReader
 
 
 def extract_pages(pdf_path: str):
-    """
-    Extract text from a PDF while preserving page information.
-    """
-
-    path = Path(pdf_path)
-
-    if not path.exists():
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-    loader = PyPDFLoader(str(path))
-
-    documents = loader.load()
-
-    pages = []
-
-    for document in documents:
-        pages.append(
-            {
-                "page": document.metadata.get("page", 0) + 1,
-                "text": document.page_content,
-            }
-        )
-
-    return pages
+    """Extract readable text with one-based physical page numbers."""
+    with open(pdf_path, "rb") as file:
+        reader = PdfReader(file)
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise ValueError("The PDF is password-protected.")
+        pages = []
+        for number, page in enumerate(reader.pages, start=1):
+            text = ""
+            if "/Contents" in page:
+                text = page.extract_text(extraction_mode="layout")
+                if not text.strip():
+                    text = page.extract_text()
+            pages.append({"page": number, "text": text})
+        return pages
