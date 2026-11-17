@@ -1,11 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 
 from backend.database import Base
 
 
 class Session(Base):
+    __table_args__ = {"sqlite_autoincrement": True}
     __tablename__ = "sessions"
 
     id = Column(
@@ -19,7 +20,8 @@ class Session(Base):
         nullable=False
     )
 
+    owner_id = Column(Integer, ForeignKey("accounts.id"), nullable=True, index=True)
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

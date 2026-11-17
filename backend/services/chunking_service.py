@@ -1,35 +1,19 @@
+import re
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 def create_chunks(pages):
-    """
-    Split extracted PDF pages into smaller chunks
-    while preserving page information.
-    """
-
+    """Prefer paragraph and sentence boundaries while keeping each chunk on one page."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
-        chunk_overlap=200
+        chunk_overlap=160,
+        separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
+        keep_separator="end",
     )
-
     chunks = []
-
     for page in pages:
-        page_documents = splitter.create_documents(
-            [page["text"]],
-            metadatas=[
-                {
-                    "page": page["page"]
-                }
-            ]
-        )
-
-        for document in page_documents:
-            chunks.append(
-                {
-                    "text": document.page_content,
-                    "page": document.metadata["page"]
-                }
-            )
-
+        text = re.sub(r"[ \t]{2,}", " ", page["text"])
+        for part in splitter.split_text(text):
+            chunks.append({"page": page["page"], "text": part})
     return chunks

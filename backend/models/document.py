@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
@@ -7,6 +7,7 @@ from backend.database import Base
 
 
 class Document(Base):
+    __table_args__ = {"sqlite_autoincrement": True}
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -31,4 +32,11 @@ class Document(Base):
         index=True
     )
 
-    upload_date = Column(DateTime, default=datetime.utcnow)
+    upload_date = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class ArtifactCleanup(Base):
+    __tablename__ = "artifact_cleanup"
+
+    document_uid = Column(String, primary_key=True)
+    filename = Column(String, nullable=False)

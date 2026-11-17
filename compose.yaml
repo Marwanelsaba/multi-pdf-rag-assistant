@@ -1,0 +1,45 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  model:
+    image: ollama/ollama:latest
+    command: ["pull", "${OLLAMA_MODEL:-qwen2.5:7b}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+  app:
+    build: .
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      RAG_AUTH_ENABLED: ${RAG_AUTH_ENABLED:-0}
+      RAG_ALLOW_REGISTRATION: ${RAG_ALLOW_REGISTRATION:-1}
+      RAG_SECURE_COOKIE: ${RAG_SECURE_COOKIE:-0}
+      RAG_RERANK_MODEL: ${RAG_RERANK_MODEL:-}
+    depends_on:
+      model:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${RAG_PORT:-8000}:8000"
+    volumes:
+      - workspace-data:/app/data
+      - embedding-models:/app/model-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  ollama-models:
+  workspace-data:
+  embedding-models:
